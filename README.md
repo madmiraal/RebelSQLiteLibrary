@@ -1,0 +1,2 @@
+# RebelSQLiteLibrary
+Rebel SQLite Library
