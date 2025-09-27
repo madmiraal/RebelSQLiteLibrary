@@ -1,0 +1,401 @@
+#include "gdsqlite.hpp"
+#include <ProjectSettings.hpp>
+#include <File.hpp>
+#include <Engine.hpp>
+
+using namespace godot;
+
+SQLite::SQLite() {
+	db = nullptr;
+	memory_read = false;
+}
+
+bool SQLite::open(String path) {
+	return open_with_flags(path, DEFAULT_OPEN_FLAGS);
+}
+
+bool SQLite::open_with_flags(String path, int flags) {
+	// Empty path
+	if (!path.strip_edges().length())
+		return false;
+
+	// If this is running outside of the editor, databases under res:// are assumed to be packed
+	if(!Engine::get_singleton()->is_editor_hint() && path.begins_with_char_array("res://"))
+	{
+		Ref<File> dbfile;
+		dbfile.instance();
+		if(dbfile->open(path, File::READ) != Error::OK)
+		{
+			Godot::print("Cannot open packed database!");
+			return false;
+		}
+		int64_t size = dbfile->get_len();
+		PoolByteArray buffer = dbfile->get_buffer(size);
+		return open_buffered_with_flags(path, buffer, size, flags);
+	}
+
+	// Convert to global path
+	String real_path = ProjectSettings::get_singleton()->globalize_path(path.strip_edges());
+
+	int inv_flag_mask = ~ALLOWED_FLAGS_MASK;
+	if((flags & inv_flag_mask) != 0)
+	{
+		Godot::print(String("WARNING: Bad flags passed to SQLite::open_with_flags (Bad flag mask: ?). Ignoring...").format(Array::make(flags & inv_flag_mask), "?"));
+	}
+
+	// Open the database
+	int result = sqlite3_open_v2(real_path.utf8().get_data(), &db, flags & ALLOWED_FLAGS_MASK, nullptr);
+
+	if (result != SQLITE_OK) {
+		Godot::print("Cannot open database!");
+		return false;
+	}
+
+	return true;
+}
+
+bool SQLite::open_buffered(String name, PoolByteArray buffers, int64_t size)
+{
+	return open_buffered_with_flags(name, buffers, size, DEFAULT_OPEN_FLAGS);
+}
+
+bool SQLite::open_buffered_with_flags(String name, PoolByteArray buffers, int64_t size, int flags) {
+	if (!name.strip_edges().length()) {
+		return false;
+	}
+
+	// Get file buffer
+	/*
+	Ref<File> file;
+	file.instance();
+
+	if (file->open(name, file->READ) != Error::OK) {
+		return false;
+	}
+
+	int64_t size = file->get_len();
+	PoolByteArray buffers = file->get_buffer(size);
+	*/
+
+	if (!buffers.size() || !size) {
+		return false;
+	}
+
+	// Initialize memory buffer
+	spmembuffer_t *p_mem = (spmembuffer_t *)calloc(1, sizeof(spmembuffer_t));
+	p_mem->total = p_mem->used = size;
+	p_mem->data = (char*)malloc(size + 1);
+	memcpy(p_mem->data, buffers.read().ptr(), size);
+	p_mem->data[size] = '\0';
+
+	// Open database
+	spmemvfs_env_init();
+	int err = spmemvfs_open_db(&p_db, name.utf8().get_data(), p_mem, flags);
+
+	if (err != SQLITE_OK || p_db.mem != p_mem) {
+		Godot::print("Cannot open buffered database!");
+		return false;
+	}
+
+	memory_read = true;
+	return true;
+}
+
+bool SQLite::open_encrypted(String path, String password)
+{
+	return open_encrypted_with_flags(path, password, DEFAULT_OPEN_FLAGS);
+}
+
+bool SQLite::open_encrypted_with_flags(String path, String password, int flags)
+{
+	bool opened = this->open_with_flags(path, flags);
+
+	if(!opened)
+	{
+		Godot::print("Failed to open encrypted database");
+		return false;
+	}
+
+	int result = sqlite3_key(get_handler(), password.utf8().get_data(), password.length());
+
+	if(result != SQLITE_OK)
+	{
+		Godot::print("Failed to open encrypted database, wrong password");
+		this->close();
+		return false;
+	}
+
+	return true;
+}
+
+void SQLite::close() {
+	if (db) {
+		// Cannot close database!
+		if (sqlite3_close_v2(db) != SQLITE_OK) {
+			Godot::print("Cannot close database!");
+		} else {
+			db = nullptr;
+		}
+	}
+
+	if (memory_read) {
+		// Close virtual filesystem database
+		spmemvfs_close_db(&p_db);
+		spmemvfs_env_fini();
+		memory_read = false;
+	}
+}
+
+sqlite3_stmt* SQLite::prepare(const char* query) {
+	// Get database pointer
+	sqlite3 *dbs = get_handler();
+
+	if (!dbs) {
+		Godot::print("Cannot prepare query! Database is not opened.");
+		return nullptr;
+	}
+
+	// Prepare the statement
+	sqlite3_stmt *stmt;
+	int result = sqlite3_prepare_v2(dbs, query, -1, &stmt, nullptr);
+
+	// Cannot prepare query!
+	if (result != SQLITE_OK) {
+		Godot::print("SQL Error: " + String(sqlite3_errmsg(dbs)));
+		return nullptr;
+	}
+
+	return stmt;
+}
+
+bool SQLite::bind_args(sqlite3_stmt *stmt, Array args)
+{
+	int param_count = sqlite3_bind_parameter_count(stmt);
+	if(param_count != args.size())
+	{
+		Godot::print(String("Query failed, expected ? args, got ?").format(Array::make(param_count, args.size()), "?"));
+		return false;
+	}
+
+	/**
+	 * SQLite data types:
+	 * - NULL
+	 * - INTEGER (signed, max 8 bytes)
+	 * - REAL (stored as a double-precision float)
+	 * - TEXT (stored in database encoding of UTF-8, UTF-16BE or UTF-16LE)
+	 * - BLOB (1:1 storage)
+	 */
+
+	for(int i = 0; i < param_count; i++)
+	{
+		int retcode;
+		switch(args[i].get_type())
+		{
+			case godot::Variant::Type::NIL:
+				retcode = sqlite3_bind_null(stmt, i+1);
+				break;
+			case godot::Variant::Type::BOOL:
+			case godot::Variant::Type::INT:
+				retcode = sqlite3_bind_int(stmt, i+1, (int)args[i]);
+				break;
+			case godot::Variant::Type::REAL:
+				retcode = sqlite3_bind_double(stmt, i+1, (double)args[i]);
+				break;
+			case godot::Variant::Type::STRING:
+				retcode = sqlite3_bind_text(stmt, i+1, (args[i].operator godot::String()).utf8().get_data(), -1, SQLITE_TRANSIENT);
+				break;
+			case godot::Variant::Type::POOL_BYTE_ARRAY:
+				retcode = sqlite3_bind_blob(stmt, i+1, (args[i].operator godot::PoolByteArray()).read().ptr(), (args[i].operator godot::PoolByteArray()).size(), SQLITE_TRANSIENT);
+				break;
+			default:
+				Godot::print(String("SQLite was passed unhandled Variant with TYPE_* enum ?. Please serialize your object into a String or a PoolByteArray.").format(Array::make(args[i].get_type()), "?"));
+				return false;
+		}
+
+		if(retcode != SQLITE_OK)
+		{
+			Godot::print(String("Query failed, an error occured while binding argument ? of ? (SQLite errcode ?)").format(Array::make(i+1, args.size(), retcode), "?"));
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool SQLite::query_with_args(String query, Array args) {
+	sqlite3_stmt *stmt = prepare(query.utf8().get_data());
+
+	// Failed to prepare the query
+	if (!stmt) {
+		return false;
+	}
+
+	if(!bind_args(stmt, args))
+	{
+		sqlite3_finalize(stmt);
+		return false;
+	}
+
+	// Evaluate the sql query
+	sqlite3_step(stmt);
+	sqlite3_finalize(stmt);
+
+	return true;
+}
+
+bool SQLite::query(String query)
+{
+	return this->query_with_args(query, PoolStringArray());
+}
+
+bool SQLite::query_all(String query_list)
+{
+	sqlite3 *dbs = get_handler();
+
+	if (!dbs) {
+		Godot::print("Cannot prepare queries! Database is not opened.");
+		return false;
+	}
+
+	int result = sqlite3_exec(dbs, query_list.utf8().get_data(), nullptr, nullptr, nullptr);
+
+	if (result != SQLITE_OK) {
+		Godot::print("SQL Error: " + String(sqlite3_errmsg(dbs)));
+		return false;
+	}
+
+	return true;
+}
+
+Array SQLite::fetch_rows(String statement, Array args, int result_type) {
+	Array result;
+
+	// Empty statement
+	if (!statement.strip_edges().length()) {
+		return result;
+	}
+
+	// Cannot prepare query
+	sqlite3_stmt *stmt = prepare(statement.strip_edges().utf8().get_data());
+	if (!stmt) {
+		return result;
+	}
+
+	if(!bind_args(stmt, args))
+	{
+		sqlite3_finalize(stmt);
+		return result;
+	}
+
+	// Fetch rows
+	while (sqlite3_step(stmt) == SQLITE_ROW) {
+		// Do a step
+		result.append(parse_row(stmt, result_type));
+	}
+
+	// Delete prepared statement
+	sqlite3_finalize(stmt);
+
+	// Return the result
+	return result;
+}
+
+Dictionary SQLite::parse_row(sqlite3_stmt *stmt, int result_type) {
+	Dictionary result;
+
+	// Get column count
+	int col_count = sqlite3_column_count(stmt);
+
+	// Fetch all column
+	for (int i = 0; i < col_count; i++) {
+		// Key name
+		const char *col_name = sqlite3_column_name(stmt, i);
+		String key = String(col_name);
+
+		// Value
+		int col_type = sqlite3_column_type(stmt, i);
+		Variant value;
+
+		// Get column value
+		switch (col_type) {
+			case SQLITE_INTEGER:
+				value = Variant(sqlite3_column_int(stmt, i));
+				break;
+
+			case SQLITE_FLOAT:
+				value = Variant(sqlite3_column_double(stmt, i));
+				break;
+
+			case SQLITE_TEXT:
+				{
+				String str = String(((const char *)sqlite3_column_text(stmt, i)));
+				value = Variant(str);
+				break;
+				}
+
+			case SQLITE_BLOB:
+				{
+				PoolByteArray arr;
+				int size = sqlite3_column_bytes(stmt, i);
+				arr.resize(size);
+				memcpy(arr.write().ptr(), sqlite3_column_blob(stmt, i), size);
+				value = Variant(arr);
+				break;
+				}
+
+			default:
+				break;
+		}
+
+		// Set dictionary value
+		if (result_type == RESULT_NUM)
+			result[i] = value;
+		else if (result_type == RESULT_ASSOC)
+			result[key] = value;
+		else {
+			result[i] = value;
+			result[key] = value;
+		}
+	}
+
+	return result;
+}
+
+Array SQLite::fetch_array(String query) {
+	return fetch_rows(query, Array(), RESULT_BOTH);
+}
+
+Array SQLite::fetch_array_with_args(String query, Array args) {
+	return fetch_rows(query, args, RESULT_BOTH);
+}
+
+Array SQLite::fetch_assoc(String query) {
+	return fetch_rows(query, Array(), RESULT_ASSOC);
+}
+
+Array SQLite::fetch_assoc_with_args(String query, Array args) {
+	return fetch_rows(query, args, RESULT_ASSOC);
+}
+
+SQLite::~SQLite() {
+	// Close database
+	close();
+}
+
+void SQLite::_register_methods() {
+	// Method list
+	register_method("open", &SQLite::open);
+	register_method("open_buffered", &SQLite::open_buffered);
+	register_method("open_buffered_with_flags", &SQLite::open_buffered_with_flags);
+	register_method("open_encrypted", &SQLite::open_encrypted);
+	register_method("open_encrypted_with_flags", &SQLite::open_encrypted_with_flags);
+	register_method("open_with_flags", &SQLite::open_with_flags);
+	register_method("query", &SQLite::query);
+	register_method("query_all", &SQLite::query_all);
+	register_method("query_with_args", &SQLite::query_with_args);
+	register_method("close", &SQLite::close);
+	register_method("fetch_array", &SQLite::fetch_array);
+	register_method("fetch_array_with_args", &SQLite::fetch_array_with_args);
+	register_method("fetch_assoc", &SQLite::fetch_assoc);
+	register_method("fetch_assoc_with_args", &SQLite::fetch_assoc_with_args);
+}
