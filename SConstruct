@@ -1,175 +1,48 @@
-#!python
-import os
-import sys
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2025 Rebel SQLite Library contributors
+# SPDX-FileCopyrightText: 2019-2020 TGRCDev
+# SPDX-FileCopyrightText: 2017-2019 Khairul Hidayat
+#
+# SPDX-License-Identifier: MIT
 
-# Environment
-env = Environment(ENV = os.environ);
+from RebelSDK.tools.build import *
 
-# Platform & bits
-platform = ARGUMENTS.get('p', ARGUMENTS.get('platform', 'windows'));
-bits = ARGUMENTS.get('b', ARGUMENTS.get('bits', '64'));
-target = ARGUMENTS.get('t', ARGUMENTS.get('target', 'release'));
-output = 'gdsqlite';
-godotcpp_lib = 'libgodot-cpp';
+environment = get_environment(ARGUMENTS)
+sqlite_environment = environment.Clone()
 
-if platform == 'linux':
-	if ARGUMENTS.get('use_llvm', 'no') == 'yes':
-		env['CXX'] = 'clang++';
-	else:
-		env['CXX']='g++';
-	
-	if target == 'debug':
-		env.Append(CCFLAGS = ['-Og']);
-	else:
-		env.Append(CCFLAGS = ['-O3']);
-	env.Append(CXXFLAGS = ['-std=c++14'])
-	env.Append(LINKFLAGS = ['-s'])
-	
-	if bits == '64':
-		env.Append(CCFLAGS = [ '-m64' ]);
-		env.Append(LINKFLAGS = [ '-m64' ]);
-	else:
-		env.Append(CCFLAGS = [ '-m32' ]);
-		env.Append(LINKFLAGS = [ '-m32' ]);
+# Build Rebel SDK
+Export("environment")
+SConscript("RebelSDK/SConstruct")
 
-if platform == 'windows':
-	if bits == '64':
-		env = Environment(ENV = os.environ, TARGET_ARCH='amd64');
-	else:
-		env = Environment(ENV = os.environ, TARGET_ARCH='x86');
-	
-	if target == 'debug':
-		env['CCPDBFLAGS'] = '/Zi /Fd${TARGET}.pdb'
-		env['PDB']='${TARGET.base}.pdb'
-		env.Append(CCFLAGS = ['-D_WIN32', '-EHsc', '/DEBUG', '-D_DEBUG', '/MDd'])
-	else:
-		env.Append(CCFLAGS = ['-D_WIN32', '/EHsc', '/O2', '/MD' ])
+# Don't encrypt the header of SQLite databases
+sqlite_environment.Append(CPPDEFINES=[("SKIP_HEADER_BYTES", 32)])
 
-# If platform is OSX
-if platform == 'osx':
-	# If using Clang
-	if ARGUMENTS.get('use_llvm', 'no') == 'yes':
-		env['CXX'] = 'clang++'
-	# Set compiler variables
-	env.Append(CCFLAGS = [ '-g','-O3', '-arch', 'x86_64' ])
-	env.Append(CXXFLAGS = [ '-std=c++14' ])
-	env.Append(LINKFLAGS = [ '-arch', 'x86_64', '-framework', 'Cocoa', '-Wl,-undefined,dynamic_lookup' ])
-	env.Append(RPATH=env.Literal("\\$$ORIGIN"))
+# Include directories
+sqlite_environment.Append(
+    CPPPATH=[
+        ".",
+        "RebelSDK/include",
+        "RebelSDK/include/api",
+        "third-party",
+    ]
+)
 
-if platform == 'android':
-	android_arch = ARGUMENTS.get('android_arch', 'armv7')
-	# Validate arch
-	if android_arch not in ['armv7', 'arm64v8', 'x86', 'x86_64']:
-		print("ERR: Invalid Android architecture \"", android_arch, "\"\nAllowed values: [armv7, arm64v8, x86, x86_64]")
-		Exit(1)
-	
-	ndk_platform = int(ARGUMENTS.get('ndk_platform', 18 if android_arch in ['armv7', 'x86'] else 21))
-	# Validate platform
-	if ndk_platform < 21 and android_arch in ['arm64v8', 'x86_64']:
-		print("WARN: ", android_arch, " architecture requires at least ndk_platform=21; settings ndk_platform=21")
-		ndk_platform = 21
-	
-	ndk_root = ARGUMENTS.get('ANDROID_NDK_ROOT', os.environ.get('ANDROID_NDK_ROOT', None))
-	# Validate NDK
-	if not ndk_root:
-		print("ERR: Could not find Android NDK path. Please install the Android NDK and set ANDROID_NDK_ROOT to the path to your installation.")
-		Exit(1)
-	
-	# Get host platform
-	if sys.platform.startswith("win"):
-		host_platform = "windows"
-		env = env.Clone(tools=['mingw'])
-	elif sys.platform.startswith("linux"):
-		host_platform = "linux"
-	elif sys.platform.startswith("darwin"):
-		host_platform = "darwin" # osx
-	else:
-		print("ERR: Could not detect host platform")
-		print("sys.platform: ", sys.platform);
-		Exit(1);
-	
-	toolchain = ndk_root + "/toolchains/llvm/prebuilt/" + host_platform
-	import platform as pltfm
-	if host_platform != 'windows' or pltfm.machine().endswith('64'):
-		toolchain += '-x86_64'
-	toolchain += "/bin/"
-
-	env['CXX'] = toolchain + "clang++"
-	env['CC'] = toolchain + "clang"
-
-	# Setup arch-specifics
-	if android_arch == 'armv7':
-		target_flags = ['-target', 'armv7a-linux-androideabi' + str(ndk_platform), '-march=armv7-a', '-mfpu=neon']
-		tool_prefix = "arm-linux-androideabi"
-	elif android_arch == 'arm64v8':
-		target_flags = ['-target', 'aarch64-linux-android' + str(ndk_platform), '-march=armv8-a']
-		tool_prefix = "aarch64-linux-android"
-	elif android_arch == "x86":
-		target_flags = ['-target', 'i686-linux-android' + str(ndk_platform)]
-		if ndk_platform < 24:
-			env.Append(CCFLAGS=['-mstackrealign'])
-		tool_prefix = "i686-linux-android"
-	elif android_arch == "x86_64":
-		target_flags = ['-target', 'x86_64-linux-android' + str(ndk_platform)]
-		tool_prefix = "x86_64-linux-android"
-	env.Append(CCFLAGS=target_flags, LINKFLAGS=target_flags)
-	
-	env['LD'] = toolchain + tool_prefix + "-ld"
-	env['RANLIB'] = toolchain + tool_prefix + '-ranlib'
-	env['AR'] = toolchain + tool_prefix + '-ar'
-	env['AS'] = toolchain + tool_prefix + '-as'
-	env['LINK'] = env['CXX']
-	env.Append(CCFLAGS=['-fPIC'])
-	env.Append(LINKFLAGS=['-fPIC'])
-	env['SHLIBPREFIX'] = 'lib'
-	env['SHLIBSUFFIX'] = '.so'
-
-	def find_ixes_wrapper(self, paths, prefix, suffix): # Prevents bad linker flags
-		if prefix == 'LIBPREFIX' and suffix == 'LIBSUFFIX':
-			return False
-		else:
-			return self.old_ixes(paths, prefix, suffix)
-	
-	from types import MethodType
-	env.old_ixes = env.FindIxes
-	env.FindIxes = MethodType(find_ixes_wrapper, env)
-
-	output += '.' + android_arch
-
-godotcpp_lib += '.' + platform + '.' + target + '.' + (bits if platform != 'android' else android_arch)
-
-if platform != 'android':
-	if bits == '64':
-		output += '.64';
-	else:
-		output += '.32';
-
-# Include dir
-env.Append(CPPPATH=[
-	'src',
-	'thirdparty/sqlite',
-	'thirdparty/godot_cpp/godot_headers/',
-	'thirdparty/godot_cpp/include',
-	'thirdparty/godot_cpp/include/core',
-	'thirdparty/godot_cpp/include/gen'
-]);
-
-# Source lists
+# Source files
 sources = [
-	'src/gdsqlite.cpp',
-	'src/library.cpp',
-	'thirdparty/sqlite/sqleet.c', # Includes 'sqlite3.c'
-	'thirdparty/sqlite/spmemvfs.c'
-];
+    "src/rebel-sqlite.cpp",
+    "src/rebel-sqlite-library.cpp",
+    "third-party/sqleet/sqleet.c",
+    "third-party/spmemvfs/spmemvfs.c",
+]
 
-# Libraries
-env.Append(LIBPATH=['thirdparty/godot_cpp/bin/']);
-env.Append(LIBS=[godotcpp_lib]);
+# Add Rebel SDK Library
+sqlite_environment.Append(LIBPATH=["RebelSDK/builds/"])
+sqlite_environment.Append(LIBS=[get_rebel_sdk_library_name(environment)])
 
-env.Append(CPPDEFINES=[ ("SKIP_HEADER_BYTES", 32) ]) # Don't encrypt the header of SQLite databases
+# Rebel SQLite Library name
+rebel_sqlite_library = "-".join(["rebel-sqlite", get_suffix(environment)])
 
-library = env.SharedLibrary(target=('bin/' + output + env['SHLIBSUFFIX']), source=sources);
-if platform == 'android': # Fix non-existant outputs
-	Install('demo/lib/gdsqlite', source=File('bin/' + env['SHLIBPREFIX'] + output + env['SHLIBSUFFIX']))
-else:
-	Install('demo/lib/gdsqlite', source=library);
+# Build library
+sqlite_environment.SharedLibrary(
+    target="builds/" + rebel_sqlite_library, source=sources
+)

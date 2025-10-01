@@ -1,0 +1,59 @@
+# SPDX-FileCopyrightText: 2025 Rebel SQLite Library contributors
+#
+# SPDX-License-Identifier: MIT
+
+# Rebel SQLite Library .gitignore
+
+# Build system created
+builds/
+.sconf_temp/
+.sconsign.dblite
+
+# Build generated
+*.a
+*.bc
+*.dll
+*.lib
+*.lo
+*.o
+*.obj
+*.os
+*.so
+emsdk/
+
+# Python generated
+__pycache__/
+
+# IDE specific
+##############
+
+# Code::Blocks
+*.cbp
+*.depend
+*.layout
+
+# CodeLite
+.codelite/
+.ctagsd/
+*.project
+*.workspace
+
+# Jetbrains
+.idea/
+*.iml
+
+# Visual Studio
+cpp.hint
+*.log
+*.pdb
+*.sln
+*.suo
+*.vcxproj*
+.vs/
+
+# Visual Studio Code
+.vscode/
+.history/
+
+# Xcode
+xcuserdata/

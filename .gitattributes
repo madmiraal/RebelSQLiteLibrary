@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: 2025 Rebel SQLite Library contributors
+
+# Rebel SQLite Library .gitattributes
+
+* text=auto eol=lf
