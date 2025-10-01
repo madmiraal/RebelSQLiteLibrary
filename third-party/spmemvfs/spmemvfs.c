@@ -26,13 +26,16 @@
 * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+// Rebel changes start.
+// Ignore "unsafe" warnings for strdup and strncpy
+#pragma warning(disable: 4996)
+// Rebel changes end.
+
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #include "spmemvfs.h"
-
-#include "sqlite3.h"
 
 /* Useful macros used in several places */
 #define SPMEMVFS_MIN(x,y) ((x)<(y)?(x):(y))
@@ -141,7 +144,9 @@ int spmemfileWrite( sqlite3_file * file, const void * buffer, int len, sqlite3_i
 		__func__, memfile, len, offset, mem->used );
 
 	if( ( offset + len ) > mem->total ) {
-		int newTotal = 2 * ( offset + len + mem->total );
+		// Rebel changes start.
+		int64_t newTotal = 2 * ( offset + len + mem->total );
+		// Rebel changes end.
 		char * newBuffer = (char*)realloc( mem->data, newTotal );
 		if( NULL == newBuffer ) {
 			return SQLITE_NOMEM;
@@ -489,7 +494,9 @@ void spmemvfs_env_fini()
 	}
 }
 
-int spmemvfs_open_db( spmemvfs_db_t * db, const char * path, spmembuffer_t * mem )
+// Rebel changes start.
+int spmemvfs_open_db( spmemvfs_db_t * db, const char * path, spmembuffer_t * mem, int flags )
+// Rebel changes end.
 {
 	int ret = 0;
 
@@ -509,7 +516,9 @@ int spmemvfs_open_db( spmemvfs_db_t * db, const char * path, spmembuffer_t * mem
 	sqlite3_mutex_leave( g_spmemvfs_env->mutex );
 
 	ret = sqlite3_open_v2( path, &(db->handle),
-			SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, SPMEMVFS_NAME );
+			// Rebel changes start.
+			flags, SPMEMVFS_NAME );
+			// Rebel changes end.
 
 	if( 0 == ret ) {
 		db->mem = mem;
