@@ -1,0 +1,49 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2025 Rebel SQLite Library contributors
+# SPDX-FileCopyrightText: 2022 Rebel Engine contributors
+# SPDX-FileCopyrightText: 2017-2022 Godot Engine contributors
+# SPDX-FileCopyrightText: 2015 Oksana Shadura
+# SPDX-FileCopyrightText: 2011 David Martin
+#
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Git pre-commit hook that runs multiple hooks specified in $hooks.
+# Make sure this script is executable. Bypass hooks with git commit --no-verify.
+
+# This file is based on the set of unofficial pre-commit hooks available on github.
+# Link: https://github.com/githubbrowser/Pre-commit-hooks
+
+## Settings
+
+# pre-commit hooks to be executed.
+# These should be in the same .git/hooks/ folder as this script.
+# Hooks should return 0 if successful and nonzero to cancel the commit.
+# They are executed in the order in which they are listed.
+hooks="pre-commit-clang-format pre-commit-black"
+
+## Code
+# There should be no need to change anything below this line.
+
+# Set exit on error.
+set -e
+
+path=$(CDPATH="" cd -- "$(dirname -- "$0")" && pwd -P)
+
+for hook in $hooks
+do
+    echo "Running hook: $hook"
+    # Run hook if it exists.
+    # If it returns a nonzero exit code, exit with 1 and abort the commit.
+    if [ -x "$path/$hook" ]; then
+        if ! "$path/$hook"; then
+            exit 1
+        fi
+    else
+        echo "Error: Hook file $hook not found."
+        echo "Aborting commit."
+        echo "Make sure $hook is in $path and executable."
+        echo "You can disable it by removing it from the hooks list in $0."
+        echo "You can skip all pre-commit hooks with --no-verify (not recommended)."
+        exit 1
+    fi
+done

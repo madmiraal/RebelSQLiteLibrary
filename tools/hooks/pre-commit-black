@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2025 Rebel SQLite Library contributors
+# SPDX-FileCopyrightText: 2022 Rebel Engine contributors
+# SPDX-FileCopyrightText: 2017-2022 Godot Engine contributors
+# SPDX-FileCopyrightText: 2015 Oksana Shadura
+# SPDX-FileCopyrightText: 2011 David Martin
+#
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Git pre-commit hook that runs a black Python style check.
+
+# The application and options.
+application_name="black"
+options=""
+
+# Files and file extensions to parse.
+include_files="SConstruct"
+include_extensions=".py"
+
+# Exclude external code: submodules and third-party code.
+exclude_directories="RebelSDK third-party"
+
+# `pre-commit-style-check` uses six variables:
+# `application_name`: The style check application to run.
+# `options`: The options passed to the style check application.
+# `include_files`: A list of specific filenames to be included.
+# `include_extensions`: A list of filename extensions to be included.
+# `exclude_directories`: A list of directories to be excluded.
+# `exclude_file_patterns`: A list of file patterns to be exclued.
+. "$(dirname -- "$0")/pre-commit-style-check"

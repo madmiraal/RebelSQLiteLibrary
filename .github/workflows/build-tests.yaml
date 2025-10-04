@@ -1,0 +1,180 @@
+name: 🏗️ Build Tests
+on: [push, pull_request]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref_name != 'main' }}
+
+jobs:
+  builds:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds
+          - name: Linux GCC build
+            os: ubuntu-22.04
+            artifact: rebel-sqlite-linux-gcc
+            build-options:
+
+          - name: Linux Clang build
+            os: ubuntu-22.04
+            artifact: rebel-sqlite-linux-clang
+            build-options: use_llvm=yes
+
+          # macOS builds
+          - name: macOS universal build
+            os: macos-latest
+            artifact: rebel-sqlite-macos-universal
+            build-options:
+
+          - name: macOS x86_64 build
+            os: macos-latest
+            artifact: rebel-sqlite-macos-x86_64
+            build-options: macos_arch=x86_64
+
+          - name: macOS arm64 build
+            os: macos-latest
+            artifact: rebel-sqlite-macos-arm64
+            build-options: macos_arch=arm64
+
+          # Windows builds
+          - name: Windows 64 bit MSVC build
+            os: windows-latest
+            artifact: rebel-sqlite-windows-64-msvc
+            build-options:
+
+          - name: Windows 64 bit MinGW build
+            os: windows-latest
+            artifact: rebel-sqlite-windows-64-mingw
+            build-options: use_mingw=yes
+
+          - name: Windows 64 bit build on Linux
+            os: ubuntu-latest
+            artifact: rebel-sqlite-windows-64-linux
+            build-options: platform=windows
+
+          - name: Windows 32 bit MSVC build
+            os: windows-latest
+            artifact: rebel-sqlite-windows-32-msvc
+            build-options: bits=32
+
+          - name: Windows 32 bit MinGW build
+            os: windows-latest
+            artifact: rebel-sqlite-windows-32-mingw
+            build-options: use_mingw=yes bits=32
+
+          # Android builds
+          - name: Android arm64v8 build on Linux
+            os: ubuntu-latest
+            artifact: rebel-sqlite-android-arm64v8-linux
+            build-options: platform=android
+
+          - name: Android arm64v8 build on macOS
+            os: macos-latest
+            artifact: rebel-sqlite-android-arm64v8-macos
+            build-options: platform=android
+
+          - name: Android arm64v8 build on Windows
+            os: windows-latest
+            artifact: rebel-sqlite-android-arm64v8-windows
+            build-options: platform=android
+
+          - name: Android armv7 build on Linux
+            os: ubuntu-latest
+            artifact: rebel-sqlite-android-armv7-linux
+            build-options: platform=android android_arch=armv7
+
+          - name: Android x86 build on Linux
+            os: ubuntu-latest
+            artifact: rebel-sqlite-android-x86-linux
+            build-options: platform=android android_arch=x86
+
+          - name: Android x86_64 build on Linux
+            os: ubuntu-latest
+            artifact: rebel-sqlite-android-x86_64-linux
+            build-options: platform=android android_arch=x86_64
+
+          # iOS builds
+          - name: iOS arm64 build
+            os: macos-latest
+            artifact: rebel-sqlite-ios-arm64
+            build-options: platform=ios
+
+          - name: iOS x86_64 build
+            os: macos-latest
+            artifact: rebel-sqlite-ios-x86_64
+            build-options: platform=ios ios_arch=x86_64
+
+          # Web builds
+          - name: Web build on Linux
+            os: ubuntu-latest
+            artifact: rebel-sqlite-web-linux
+            build-options: platform=web
+
+          - name: Web build on macOS
+            os: macos-latest
+            artifact: rebel-sqlite-web-macos
+            build-options: platform=web
+
+          - name: Web build on Windows
+            os: windows-latest
+            artifact: rebel-sqlite-web-windows
+            build-options: platform=web
+
+    steps:
+      - name: Checkout Rebel SQLite Library
+        uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Remove link
+        shell: bash
+        run: rm -rf RebelSDK
+
+      - name: Checkout Rebel SDK
+        uses: actions/checkout@v5
+        with:
+          repository: madmiraal/RebelSDK
+          ref: create-initial-sdk
+          path: RebelSDK
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          #Install dependencies
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            echo "::group::Installing Linux dependencies"
+            sudo apt-get update
+            sudo apt-get install -y \
+            gcc                     \
+            clang                   \
+            lld                     \
+            mingw-w64               \
+            scons
+            echo "::endgroup::"
+          fi
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            echo "::group::Installing macOS dependencies"
+            python -m ensurepip --upgrade
+            python -m pip install scons
+            echo "::endgroup::"
+          fi
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            echo "::group::Installing Windows dependencies"
+            python -m ensurepip --upgrade
+            python -m pip install scons
+            echo "::endgroup::"
+          fi
+
+      - name: Build Rebel SQLite Library
+        run: |
+          scons -j2 ${{ matrix.build-options }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.artifact }}
+          path: builds/
